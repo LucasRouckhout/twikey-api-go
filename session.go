@@ -1,12 +1,12 @@
 package twikey
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,13 +23,13 @@ func generateOtp(_salt string, _privKey string) (int, error) {
 	}
 
 	total := len(salt) + len(privkey)
-	key := make([]byte, total, total)
+	key := make([]byte, total)
 	copy(key, salt)
 	copy(key[len(salt):], privkey)
 
 	buf := make([]byte, 8)
 	_time := time.Now().UTC().Unix() //*1000
-	counter := uint64(math.Floor(float64(_time / 30)))
+	counter := uint64(_time / 30)
 	binary.BigEndian.PutUint64(buf, counter)
 
 	mac := hmac.New(sha256.New, key)
@@ -46,7 +46,7 @@ func generateOtp(_salt string, _privKey string) (int, error) {
 	return int(v % 100000000), nil
 }
 
-func (c *Client) refreshTokenIfRequired() error {
+func (c *Client) refreshTokenIfRequired(ctx context.Context) error {
 
 	if c.TimeProvider.Now().Sub(c.lastLogin).Hours() < 23 {
 		return nil
@@ -61,47 +61,47 @@ func (c *Client) refreshTokenIfRequired() error {
 
 	c.Debug.Tracef("Connecting to %s with %s", c.BaseURL, c.APIKey)
 
-	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/creditor", strings.NewReader(params.Encode()))
-	if err == nil {
-		req.Header.Set("User-Agent", c.UserAgent)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := c.HTTPClient.Do(req)
-		if err == nil {
-			token := resp.Header["Authorization"]
-			if resp.StatusCode == 200 && token != nil {
-				c.Debug.Tracef("Connected to %s with token %s", c.BaseURL, token[0])
-				c.apiToken = token[0]
-				c.lastLogin = c.TimeProvider.Now()
-				return nil
-			} else if resp.StatusCode > 500 {
-				c.Debug.Tracef("General error : [%d] %s", resp.StatusCode, resp.Status)
-				err = NewTwikeyErrorFromResponse(resp)
-			} else if resp.StatusCode > 200 {
-				c.Debug.Tracef("Other error : [%d] %s", resp.StatusCode, resp.Status)
-				err = NewTwikeyErrorFromResponse(resp)
-			} else if errcode := resp.Header["Apierror"]; errcode != nil {
-				c.Debug.Tracef("Error invalid apiToken status = %s", errcode[0])
-				err = NewTwikeyError(errcode[0], "Invalid apiToken", "")
-			}
-		}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/creditor", strings.NewReader(params.Encode()))
+	if err != nil {
+		c.Debug.Debugf("Error while connecting : %v", err)
+		return err
+	}
+
+	req.Header.Set("User-Agent", c.UserAgent)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
 		c.apiToken = ""
 		c.lastLogin = time.Unix(0, 0)
 		return err
 	}
-	c.Debug.Debugf("Error while connecting : %v", err)
-	return err
-}
+	defer resp.Body.Close()
 
-func (c *Client) logout() {
-	req, _ := http.NewRequest(http.MethodGet, c.BaseURL+"/creditor", nil)
-	req.Header.Set("User-Agent", c.UserAgent)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Authorization", c.apiToken)
+	token := resp.Header["Authorization"]
+	errcode := resp.Header["Apierror"]
 
-	res, err := c.HTTPClient.Do(req)
-	if err != nil {
-		c.Debug.Debugf("Error in logout from Twikey: %v", err)
-	} else if res.StatusCode != 200 {
-		c.Debug.Debugf("Error in logout from Twikey: %d", res.StatusCode)
+	if resp.StatusCode != http.StatusOK || token == nil {
+		switch {
+		case resp.StatusCode > http.StatusInternalServerError:
+			{
+				c.Debug.Tracef("General error : [%d] %s", resp.StatusCode, resp.Status)
+				return NewTwikeyErrorFromResponse(resp)
+			}
+		case resp.StatusCode > http.StatusOK:
+			{
+				c.Debug.Tracef("Other error : [%d] %s", resp.StatusCode, resp.Status)
+				return NewTwikeyErrorFromResponse(resp)
+			}
+		case errcode != nil:
+			{
+				c.Debug.Tracef("Error invalid apiToken status = %s", errcode[0])
+				return NewTwikeyError(errcode[0], "Invalid apiToken", "")
+			}
+		}
 	}
+
+	c.Debug.Tracef("Connected to %s with token %s", c.BaseURL, token[0])
+	c.apiToken = token[0]
+	c.lastLogin = c.TimeProvider.Now()
+	return nil
 }

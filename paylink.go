@@ -95,7 +95,7 @@ func (c *Client) PaylinkNew(ctx context.Context, paylinkRequest *PaylinkRequest)
 	}
 
 	var paylink Paylink
-	err := c.sendRequest(req, &paylink)
+	err := c.sendRequest(ctx, req, &paylink)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (c *Client) PaylinkNew(ctx context.Context, paylinkRequest *PaylinkRequest)
 // PaylinkFeed retrieves the feed of updated paylinks since last call
 func (c *Client) PaylinkFeed(ctx context.Context, callback func(paylink *Paylink), sideloads ...string) error {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 

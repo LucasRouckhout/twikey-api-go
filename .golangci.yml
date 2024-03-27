@@ -1,0 +1,32 @@
+run:
+  timeout: 1m
+  issues-exit-code: 2
+  tests: false
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - gosimple
+    - ineffassign
+    - staticcheck
+    - unused
+    - asasalint
+    - asciicheck
+    - bodyclose
+    - bidichk
+    - copyloopvar
+    - durationcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - gofmt
+    - goprintffuncname
+    - nestif
+    - noctx
+    - nonamedreturns
+    - prealloc
+    - predeclared
+    - reassign
+    - rowserrcheck
+    - unconvert

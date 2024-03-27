@@ -2,6 +2,7 @@
 package twikey
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -127,16 +128,16 @@ type errorResponse struct {
 }
 
 // Ping Try the current credentials
-func (c *Client) Ping() error {
-	if err := c.refreshTokenIfRequired(); err != nil {
+func (c *Client) Ping(ctx context.Context) error {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *Client) sendRequest(req *http.Request, v interface{}) error {
+func (c *Client) sendRequest(ctx context.Context, req *http.Request, v interface{}) error {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 
@@ -152,9 +153,13 @@ func (c *Client) sendRequest(req *http.Request, v interface{}) error {
 		c.Debug.Tracef("Error while connecting %v", err)
 		return err
 	}
+	defer res.Body.Close()
 
-	payload, _ := io.ReadAll(res.Body)
-	_ = res.Body.Close()
+	payload, err := io.ReadAll(res.Body)
+	if err != nil {
+		c.Debug.Debugf("could not read out response body from %s", req.URL.Path)
+		return err
+	}
 
 	c.Debug.Tracef("Response for %s %s %s", req.Method, req.URL, string(payload))
 

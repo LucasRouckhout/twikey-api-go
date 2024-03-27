@@ -100,7 +100,7 @@ func (c *Client) TransactionNew(ctx context.Context, transaction *TransactionReq
 		req.Header.Add("X-RESERVATION", transaction.Reservation)
 	}
 	var transactionList TransactionList
-	err := c.sendRequest(req, &transactionList)
+	err := c.sendRequest(ctx, req, &transactionList)
 	if err != nil {
 		return nil, err
 	}
@@ -124,20 +124,30 @@ func (c *Client) ReservationNew(ctx context.Context, reservationRequest *Reserva
 	if reservationRequest.Force {
 		params.Add("force", "true")
 	}
+
 	c.Debug.Debugf("New reservation %s", params)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/creditor/reservation", strings.NewReader(params.Encode()))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/creditor/reservation", strings.NewReader(params.Encode()))
+	if err != nil {
+		return nil, err
+	}
+
 	if reservationRequest.IdempotencyKey != "" {
 		req.Header.Add("Idempotency-Key", reservationRequest.IdempotencyKey)
 	}
+
 	reservation := &Reservation{}
-	err := c.sendRequest(req, reservation)
-	return reservation, err
+	if err := c.sendRequest(ctx, req, reservation); err != nil {
+		return nil, err
+	}
+
+	return reservation, nil
 }
 
 // TransactionFeed retrieves all transaction updates since the last call with a callback since there may be many
 func (c *Client) TransactionFeed(ctx context.Context, callback func(transaction *Transaction), sideloads ...string) error {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 
@@ -212,7 +222,7 @@ func (c *Client) TransactionCollect(ctx context.Context, template string, prenot
 		f(opt)
 	}
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return "", err
 	}
 

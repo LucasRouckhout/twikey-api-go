@@ -41,8 +41,3 @@ func NewTwikeyErrorFromResponse(res *http.Response) *TwikeyError {
 		Message: res.Status,
 	}
 }
-
-var SystemError error = &TwikeyError{
-	Status: 500,
-	Code:   "system_error",
-}

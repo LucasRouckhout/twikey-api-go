@@ -1,6 +1,7 @@
 package twikey
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"testing"
@@ -20,6 +21,8 @@ func (t *TestTimeProvider) Add(duration time.Duration) {
 }
 
 func TestClient_refreshTokenIfRequired(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("TWIKEY_API_KEY") == "" {
 		t.Skip("No TWIKEY_API_KEY available")
 	}
@@ -38,14 +41,15 @@ func TestClient_refreshTokenIfRequired(t *testing.T) {
 		TimeProvider: &ttp,
 	}
 
-	err := c.refreshTokenIfRequired()
+	ctx := context.Background()
+	err := c.refreshTokenIfRequired(ctx)
 	if err != nil {
 		t.Error(err)
 	}
 	firstLogin := c.lastLogin
 
 	ttp.Add(time.Hour*23 + time.Minute*20)
-	err = c.refreshTokenIfRequired()
+	err = c.refreshTokenIfRequired(ctx)
 	if err != nil {
 		t.Error(err)
 	}

@@ -225,7 +225,7 @@ func (c *Client) DocumentInvite(ctx context.Context, request *InviteRequest) (*I
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/creditor/invite", strings.NewReader(params))
 
 	var invite Invite
-	if err := c.sendRequest(req, &invite); err != nil {
+	if err := c.sendRequest(ctx, req, &invite); err != nil {
 		return nil, err
 	}
 	return &invite, nil
@@ -243,7 +243,7 @@ func (c *Client) DocumentSign(ctx context.Context, request *InviteRequest) (*Inv
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/creditor/sign", strings.NewReader(params))
 
 	var invite Invite
-	if err := c.sendRequest(req, &invite); err != nil {
+	if err := c.sendRequest(ctx, req, &invite); err != nil {
 		return nil, err
 	}
 	return &invite, nil
@@ -264,7 +264,7 @@ func (c *Client) DocumentUpdate(ctx context.Context, request *UpdateRequest) err
 	req.Header.Add("Accept", "application/json")
 	req.Header.Set("User-Agent", c.UserAgent)
 
-	err := c.sendRequest(req, nil)
+	err := c.sendRequest(ctx, req, nil)
 	if err != nil {
 		return err
 	}
@@ -290,7 +290,7 @@ func (c *Client) DocumentCancel(ctx context.Context, mandate string, reason stri
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.UserAgent)
 
-	err := c.sendRequest(req, nil)
+	err := c.sendRequest(ctx, req, nil)
 	return err
 }
 
@@ -319,12 +319,16 @@ func (c *Client) DocumentFeed(
 	updateDocument func(originalMandateNumber string, mandate *Mndt, reason *AmdmntRsn, eventTime string),
 	cancelledDocument func(mandateNumber string, reason *CxlRsn, eventTime string)) error {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 
 	for {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/creditor/mandate", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/creditor/mandate", nil)
+		if err != nil {
+			return err
+		}
+
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Authorization", c.apiToken)
 		req.Header.Set("Accept", "application/json")
@@ -334,31 +338,32 @@ func (c *Client) DocumentFeed(
 		if err != nil {
 			return err
 		}
-		if res.StatusCode == 200 {
-			payload, _ := io.ReadAll(res.Body)
-			var updates MandateUpdates
-			err := json.Unmarshal(payload, &updates)
-			if err != nil {
-				return err
-			}
 
-			res.Body.Close()
-			c.Debug.Debugf("Fetched %d documents\n", len(updates.Messages))
-			for _, update := range updates.Messages {
-				if update.CxlRsn != nil {
-					cancelledDocument(update.OrgnlMndtId, update.CxlRsn, update.EvtTime)
-				} else if update.AmdmntRsn != nil {
-					updateDocument(update.OrgnlMndtId, update.Mndt, update.AmdmntRsn, update.EvtTime)
-				} else {
-					newDocument(update.Mndt, update.EvtTime)
-				}
-			}
-
-			if len(updates.Messages) == 0 {
-				return nil
-			}
-		} else {
+		if res.StatusCode != http.StatusOK {
 			return NewTwikeyErrorFromResponse(res)
+		}
+
+		payload, _ := io.ReadAll(res.Body)
+		var updates MandateUpdates
+		if err := json.Unmarshal(payload, &updates); err != nil {
+			return err
+		}
+
+		res.Body.Close()
+
+		c.Debug.Debugf("Fetched %d documents\n", len(updates.Messages))
+		for _, update := range updates.Messages {
+			if update.CxlRsn != nil {
+				cancelledDocument(update.OrgnlMndtId, update.CxlRsn, update.EvtTime)
+			} else if update.AmdmntRsn != nil {
+				updateDocument(update.OrgnlMndtId, update.Mndt, update.AmdmntRsn, update.EvtTime)
+			} else {
+				newDocument(update.Mndt, update.EvtTime)
+			}
+		}
+
+		if len(updates.Messages) == 0 {
+			return nil
 		}
 	}
 }
@@ -379,28 +384,34 @@ func (c *Client) DownloadPdf(ctx context.Context, mndtId string, downloadFile st
 	if err != nil {
 		return err
 	}
-	if res.StatusCode == 200 {
-		payload, _ := io.ReadAll(res.Body)
+	defer res.Body.Close()
 
-		f, _ := os.Create(downloadFile)
-		defer f.Close()
-		_, err := f.Write(payload)
-		if err != nil {
-			c.Debug.Debugf("Unable to download file %s : %v", absPath, err)
-		} else {
-			c.Debug.Debugf("Saving to file %s", absPath)
-		}
+	if res.StatusCode != http.StatusOK {
+		c.Debug.Debugf("Unable to download file %s", absPath)
+		return NewTwikeyErrorFromResponse(res)
+	}
+
+	payload, err := io.ReadAll(res.Body)
+	if err != nil {
 		return err
 	}
-	c.Debug.Debugf("Unable to download file %s", absPath)
-	return NewTwikeyErrorFromResponse(res)
+
+	f, _ := os.Create(downloadFile)
+	defer f.Close()
+	if _, err := f.Write(payload); err != nil {
+		c.Debug.Debugf("Unable to download file %s : %v", absPath, err)
+		return err
+	}
+
+	c.Debug.Debugf("Saving to file %s", absPath)
+	return nil
 }
 
 // DocumentDetail allows a snapshot of a particular mandate, note that this is rate limited.
 // Force ignores the state of the mandate which is being returned
 func (c *Client) DocumentDetail(ctx context.Context, mndtId string, force bool) (*MndtDetail, error) {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return nil, err
 	}
 
@@ -410,7 +421,11 @@ func (c *Client) DocumentDetail(ctx context.Context, mndtId string, force bool) 
 		params.Add("force", "1")
 	}
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/creditor/mandate/detail?"+params.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/creditor/mandate/detail?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+
 	req.Header.Add("Accept-Language", "en")
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", c.UserAgent)
@@ -420,18 +435,23 @@ func (c *Client) DocumentDetail(ctx context.Context, mndtId string, force bool) 
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode == 200 {
-		payload, _ := io.ReadAll(res.Body)
+	defer res.Body.Close()
 
-		var mndt MndtDetail
-		err := json.Unmarshal(payload, &mndt)
-		if err != nil {
-			return nil, err
-		}
-
-		mndt.State = res.Header.Get("X-STATE")
-		mndt.Collectable = res.Header.Get("X-COLLECTABLE") == "true"
-		return &mndt, nil
+	if res.StatusCode != http.StatusOK {
+		return nil, NewTwikeyErrorFromResponse(res)
 	}
-	return nil, NewTwikeyErrorFromResponse(res)
+
+	payload, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var mndt MndtDetail
+	if err := json.Unmarshal(payload, &mndt); err != nil {
+		return nil, err
+	}
+
+	mndt.State = res.Header.Get("X-STATE")
+	mndt.Collectable = res.Header.Get("X-COLLECTABLE") == "true"
+	return &mndt, nil
 }

@@ -123,7 +123,7 @@ type InvoiceFeedMeta struct {
 // InvoiceAdd sends an invoice to Twikey in UBL format
 func (c *Client) InvoiceAdd(ctx context.Context, invoiceRequest *NewInvoiceRequest) (*Invoice, error) {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return nil, err
 	}
 
@@ -143,8 +143,11 @@ func (c *Client) InvoiceAdd(ctx context.Context, invoiceRequest *NewInvoiceReque
 		if err != nil {
 			return nil, err
 		}
-		req, _ = http.NewRequest(http.MethodPost, c.BaseURL+"/creditor/invoice", bytes.NewReader(invoiceBytes))
-		req.WithContext(ctx)
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/creditor/invoice", bytes.NewReader(invoiceBytes))
+		if err != nil {
+			return nil, err
+		}
+
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", c.apiToken) //Already there
 		req.Header.Set("Accept", "application/json")
@@ -167,8 +170,10 @@ func (c *Client) InvoiceAdd(ctx context.Context, invoiceRequest *NewInvoiceReque
 		}
 	} else if len(invoiceRequest.UblBytes) != 0 {
 		invoiceUrl := c.BaseURL + "/creditor/invoice/ubl"
-		req, _ = http.NewRequest(http.MethodPost, invoiceUrl, bytes.NewReader(invoiceRequest.UblBytes))
-		req.WithContext(ctx)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, invoiceUrl, bytes.NewReader(invoiceRequest.UblBytes))
+		if err != nil {
+			return nil, err
+		}
 		req.Header.Set("Content-Type", "application/xml")
 		req.Header.Set("Authorization", c.apiToken) //Already there
 		req.Header.Set("Accept", "application/json")
@@ -212,6 +217,8 @@ func (c *Client) InvoiceAdd(ctx context.Context, invoiceRequest *NewInvoiceReque
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
+
 	if res.StatusCode == 200 {
 		payload, _ := io.ReadAll(res.Body)
 		c.Debug.Debugf("TwikeyInvoice: %s", string(payload))
@@ -234,7 +241,7 @@ func (c *Client) InvoiceAdd(ctx context.Context, invoiceRequest *NewInvoiceReque
 // InvoiceFeed Get invoice Feed twikey
 func (c *Client) InvoiceFeed(ctx context.Context, callback func(invoice *Invoice), sideloads ...string) error {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 
@@ -256,7 +263,7 @@ func (c *Client) InvoiceFeed(ctx context.Context, callback func(invoice *Invoice
 	var moreInvoices = true
 
 	for moreInvoices {
-		if err := c.sendRequest(req, &feeds); err != nil {
+		if err := c.sendRequest(ctx, req, &feeds); err != nil {
 			return err
 		}
 
@@ -272,7 +279,7 @@ func (c *Client) InvoiceFeed(ctx context.Context, callback func(invoice *Invoice
 // InvoiceDetail allows a snapshot of a particular invoice, note that this is rate limited
 func (c *Client) InvoiceDetail(ctx context.Context, invoiceIdOrNumber string, sideloads ...string) (*Invoice, error) {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return nil, err
 	}
 
@@ -285,8 +292,7 @@ func (c *Client) InvoiceDetail(ctx context.Context, invoiceIdOrNumber string, si
 		}
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, _url, nil)
-	req.WithContext(ctx)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, _url, nil)
 	req.Header.Add("Accept-Language", "en")
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", c.UserAgent)
@@ -296,6 +302,8 @@ func (c *Client) InvoiceDetail(ctx context.Context, invoiceIdOrNumber string, si
 	if err != nil {
 		return nil, err
 	}
+	defer res.Body.Close()
+
 	if res.StatusCode == 200 {
 		payload, _ := io.ReadAll(res.Body)
 
@@ -313,7 +321,7 @@ func (c *Client) InvoiceDetail(ctx context.Context, invoiceIdOrNumber string, si
 // InvoiceAction allows certain actions to be done on an existing invoice
 func (c *Client) InvoiceAction(ctx context.Context, invoiceIdOrNumber string, action InvoiceAction) error {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 
@@ -335,8 +343,7 @@ func (c *Client) InvoiceAction(ctx context.Context, invoiceIdOrNumber string, ac
 		return errors.New("invalid action")
 	}
 
-	req, _ := http.NewRequest(http.MethodPost, _url, strings.NewReader(params.Encode()))
-	req.WithContext(ctx)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, _url, strings.NewReader(params.Encode()))
 	req.Header.Add("Accept-Language", "en")
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", c.UserAgent)
@@ -346,6 +353,8 @@ func (c *Client) InvoiceAction(ctx context.Context, invoiceIdOrNumber string, ac
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
+
 	if res.StatusCode == 204 {
 		return nil
 	}
@@ -355,7 +364,7 @@ func (c *Client) InvoiceAction(ctx context.Context, invoiceIdOrNumber string, ac
 // InvoicePayment allows marking an existing invoice as paid
 func (c *Client) InvoicePayment(ctx context.Context, invoiceIdOrNumber string, method string, paymentdate string) error {
 
-	if err := c.refreshTokenIfRequired(); err != nil {
+	if err := c.refreshTokenIfRequired(ctx); err != nil {
 		return err
 	}
 
@@ -365,8 +374,7 @@ func (c *Client) InvoicePayment(ctx context.Context, invoiceIdOrNumber string, m
 	params.Add("rsn", method)
 	params.Add("date", paymentdate)
 
-	req, _ := http.NewRequest(http.MethodPost, _url, strings.NewReader(params.Encode()))
-	req.WithContext(ctx)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, _url, strings.NewReader(params.Encode()))
 	req.Header.Add("Accept-Language", "en")
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", c.UserAgent)
@@ -376,6 +384,8 @@ func (c *Client) InvoicePayment(ctx context.Context, invoiceIdOrNumber string, m
 	if err != nil {
 		return err
 	}
+	defer res.Body.Close()
+
 	if res.StatusCode == 204 {
 		return nil
 	}
